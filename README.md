@@ -3,17 +3,17 @@
 | [Full TabICLv2 code](github.com/soda-inria/tabicl) | [TabICLv2 Paper](todo) |
 |----------------------------------------------------|------------------------|
 
-This repository provides a short ($\approx$170 LOC) implementation of the [TabICLv2](todo) architecture.
+This repository provides a short (~170 LOC) implementation of the [TabICLv2](todo) architecture.
 For using our pre-trained TabICLv2 model, 
 please visit the [main repository](github.com/soda-inria/tabicl).
 
 Compared to [nanoTabPFN](https://github.com/automl/nanoTabPFN),
 
-- the model is TabICLv2, not TabPFN
+- the model is TabICLv2, not TabPFN,
 - we implement the full model (including RoPE, QASSMax, etc.) with speed optimizations
-  (but without the inference wrappers + memory optimizations from the main repository)
-- we implement regression as well
-- we currently do not provide a sklearn interface.
+  (but without the inference wrappers + memory optimizations from the main repository),
+- we implement regression as well,
+- we currently do not provide a sklearn interface,
 - we currently do not provide pre-training code.
   For now, we refer to [nanoTabPFN](https://github.com/automl/nanoTabPFN) and
   the [nanoTabPFN speedrun](https://github.com/borawhocodess/modded-nanotabpfn) for pre-training code.
