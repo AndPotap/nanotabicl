@@ -1,11 +1,11 @@
 # NanoTabICL: a minimal TabICLv2 implementation
 
-| [Full TabICLv2 code](github.com/soda-inria/tabicl) | [TabICLv2 Paper](https://arxiv.org/abs/2602.11139) |
+| [Full TabICLv2 code](https://github.com/soda-inria/tabicl) | [TabICLv2 Paper](https://arxiv.org/abs/2602.11139) |
 |----------------------------------------------------|------------------------|
 
 This repository provides a short (~170 LOC) implementation of the [TabICLv2](https://arxiv.org/abs/2602.11139) architecture.
 For using our pre-trained TabICLv2 model, 
-please visit the [main repository](github.com/soda-inria/tabicl).
+please visit the [main repository](https://github.com/soda-inria/tabicl).
 
 Compared to [nanoTabPFN](https://github.com/automl/nanoTabPFN),
 
