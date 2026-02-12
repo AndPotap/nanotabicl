@@ -1,9 +1,9 @@
 # NanoTabICL: a minimal TabICLv2 implementation
 
-| [Full TabICLv2 code](github.com/soda-inria/tabicl) | [TabICLv2 Paper](todo) |
+| [Full TabICLv2 code](github.com/soda-inria/tabicl) | [TabICLv2 Paper](https://arxiv.org/abs/2602.11139) |
 |----------------------------------------------------|------------------------|
 
-This repository provides a short (~170 LOC) implementation of the [TabICLv2](todo) architecture.
+This repository provides a short (~170 LOC) implementation of the [TabICLv2](https://arxiv.org/abs/2602.11139) architecture.
 For using our pre-trained TabICLv2 model, 
 please visit the [main repository](github.com/soda-inria/tabicl).
 
