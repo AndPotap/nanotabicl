@@ -41,3 +41,7 @@ y_test_pred_quantiles = model(X_train_and_test, y_train)
 Note that `X_train_and_test` is standardized inside the model (based on train only). 
 We do not include other preprocessing options from TabICLv2 
 since they are normally not part of the architecture.
+
+## Updates
+
+- 2026/03/25: Add faster + cached RoPE implementation based on the TabICLv2 version (warning: this permutes the neurons, so it's not compatible with older nanotabicl checkpoints).

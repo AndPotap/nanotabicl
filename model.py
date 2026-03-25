@@ -75,10 +75,9 @@ def get_mlp(n_in: int, n_hidden: int, n_out: int):
 class TableAttnBase(nn.Module):  # base class with functions to apply attention on 2D tables instead of 1D sequences
     def row_attn(self, q, kv=None, **kwargs):  # apply attention within each row separately
         n_batch, n_rows, n_cols, embed_dim = q.shape
-        q = q.flatten(0, 1)  # merge rows dim into batch dim
-        kv = None if kv is None else kv.flatten(0, 1)  # same for kv
-        x = self(q, kv, **kwargs)  # apply attention, then unmerge rows dim from batch dim (below)
-        return x.reshape(n_batch, n_rows, -1, embed_dim)  # dimension -2 might differ because of q_max_idx in kwargs
+        q, kv = (None if t is None else t.flatten(0, 1) for t in [q, kv])  # merge rows dim into batch dim
+        # apply attention -> unmerge rows dim from batch dim; dimension -2 might differ because of q_max_idx in kwargs
+        return self(q, kv, **kwargs).reshape(n_batch, n_rows, -1, embed_dim)
 
     def col_attn(self, q, kv=None, **kwargs):  # apply attention within each column separately
         return self.row_attn(q.transpose(1, 2), None if kv is None else kv.transpose(1, 2), **kwargs).transpose(1, 2)
@@ -99,7 +98,7 @@ class InducedTransformerBlock(TableAttnBase):
 class TransformerBlock(nn.MultiheadAttention, TableAttnBase):
     def __init__(self, embed_dim: int, num_heads: int, use_rope: bool = False, ssmax: bool = False):
         super().__init__(embed_dim=embed_dim, num_heads=num_heads)
-        self.use_rope = use_rope
+        self.rope = Rope(head_dim=embed_dim // num_heads, theta=100_000.0) if use_rope else None
         self.ssmax_layer = QASSMax(num_heads=num_heads, head_dim=embed_dim // num_heads) if ssmax else None
         self.mlp = get_mlp(embed_dim, embed_dim * 2, embed_dim)
         self.ln_attn = nn.LayerNorm(embed_dim)
@@ -121,11 +120,8 @@ class TransformerBlock(nn.MultiheadAttention, TableAttnBase):
         q, k, v = nn.functional._in_projection_packed(q, k, k, self.in_proj_weight, self.in_proj_bias)
         q, k, v = (t.unflatten(-1, (self.num_heads, self.head_dim)).transpose(-3, -2) for t in [q, k, v])
 
-        if self.ssmax_layer is not None:
-            q = self.ssmax_layer(q=q, n=k.size(-2))
-
-        if self.use_rope:
-            q, k = apply_rope(q), apply_rope(k)
+        q = q if self.ssmax_layer is None else self.ssmax_layer(q=q, n=k.size(-2))  # SSMax (optional)
+        q, k = (t if self.rope is None else self.rope(t) for t in [q, k])  # RoPE (optional)
 
         # attention with heads in batch dim (maybe needed for FlashAttention) -> put the head dim back -> out projection
         attn_output = nn.functional.scaled_dot_product_attention(*[t.flatten(0, 1) for t in (q, k, v)]).view(q.shape)
@@ -133,19 +129,26 @@ class TransformerBlock(nn.MultiheadAttention, TableAttnBase):
         return self.out_proj(attn_output.transpose(-3, -2).flatten(-2, -1))  # (batch_size, q_len, embed_dim)
 
 
-@torch.autocast("cuda", enabled=False)
-def apply_rope(x: torch.Tensor, theta: float = 100_000.0) -> torch.Tensor:  # Apply rotary positional embeddings
-    # Rotates dimension pairs (i, i+1) like TabICLv1, not (i, head_dim//2 + i) like TabICLv2.
-    batch_size, num_heads, seq_len, head_dim = x.shape
+class Rope(nn.Module):  # rotary positional encoding
+    def __init__(self, head_dim: int, theta: float):
+        super().__init__()
+        self.half = head_dim // 2
+        self.register_buffer("inv_freq", theta ** torch.linspace(0.0, -1.0, self.half + 1)[:-1], persistent=False)
+        self.register_buffer("sin", torch.empty(0), persistent=False)
+        self.register_buffer("cos", torch.empty(0), persistent=False)
 
-    pos = torch.arange(seq_len, device=x.device).float()  # this part could be cached for a slight speed boost
-    inv_freq = theta ** (torch.linspace(0.0, -1.0, head_dim//2 + 1, device=x.device)[:-1])  # (head_dim//2,)
-    angles = torch.outer(pos, inv_freq)  # (seq_len, head_dim//2)
-    sin, cos = angles.sin(), angles.cos()
-    mat = torch.stack([cos, -sin, sin, cos], dim=-1).unflatten(-1, (2, 2))  # (seq_len, head_dim//2, 2, 2)
+    @torch.autocast("cuda", enabled=False)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size, num_heads, seq_len, head_dim = x.shape
 
-    # basically, compute torch.cat([x1*cos-x2*sin, x1*sin+x2*cos]), where x1 = x[..., ::2] and x2 = x[..., 1::2]
-    return (mat[None, None, :seq_len] @ x.unflatten(-1, (-1, 2, 1))).flatten(-3, -1)
+        if self.cos.numel() == 0 or self.cos.device != x.device or self.cos.size(0) < seq_len:  # need to extend cache
+            pos = torch.arange(seq_len, device=x.device, dtype=self.inv_freq.dtype)  # (seq_len,)
+            angles = pos[:, None] * self.inv_freq[None, :]  # (seq_len, half_head_dim)
+            self.sin, self.cos = angles.sin(), angles.cos()  # (seq_len, half_head_dim)
+
+        sin, cos = self.sin[:seq_len], self.cos[:seq_len]
+        x1, x2 = x[..., :self.half], x[..., self.half:]  # (batch_size, num_heads, seq_len, half_head_dim)
+        return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1).to(x.dtype)
 
 
 class QASSMax(nn.Module):  # query-aware scalable softmax for better context length scaling
