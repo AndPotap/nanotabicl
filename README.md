@@ -17,6 +17,9 @@ Compared to [nanoTabPFN](https://github.com/automl/nanoTabPFN),
 - we currently do not provide pre-training code.
   For now, we refer to [nanoTabPFN](https://github.com/automl/nanoTabPFN) and
   the [nanoTabPFN speedrun](https://github.com/borawhocodess/modded-nanotabpfn) for pre-training code.
+  
+Note that this repo uses LayerNorm with bias, which is used by the classification checkpoint of TabICLv2,
+while the regression checkpoint of TabICLv2 uses LayerNorm without bias.
 
 ## Usage
 
