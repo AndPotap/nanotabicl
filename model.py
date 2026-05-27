@@ -1,11 +1,26 @@
-import typing, math, torch, torch.nn as nn
+import math
+import typing
+
+import torch
+import torch.nn as nn
 
 
 class NanoTabICLv2(nn.Module):
-    def __init__(self, max_classes: int, out_dim: int, embed_dim: int = 128,
-                 col_num_blocks: int = 3, row_num_blocks: int = 3, icl_num_blocks: int = 12,
-                 col_nhead: int = 8, row_nhead: int = 8, icl_nhead: int = 8,
-                 feature_group_size: int = 3, n_cls_cols: int = 4, n_cls_rows: int = 128):
+    def __init__(
+        self,
+        max_classes: int,
+        out_dim: int,
+        embed_dim: int = 128,
+        col_num_blocks: int = 3,
+        row_num_blocks: int = 3,
+        icl_num_blocks: int = 12,
+        col_nhead: int = 8,
+        row_nhead: int = 8,
+        icl_nhead: int = 8,
+        feature_group_size: int = 3,
+        n_cls_cols: int = 4,
+        n_cls_rows: int = 128,
+    ):
         # classification: max_classes = out_dim (= 10 typically); regression: max_classes = 0, out_dim = n_quantiles
         super().__init__()
         self.feature_group_size = feature_group_size
@@ -17,11 +32,12 @@ class NanoTabICLv2(nn.Module):
 
         self.col_blocks = nn.ModuleList([
             InducedTransformerBlock(embed_dim=embed_dim, num_heads=col_nhead, n_inducing=n_cls_rows, ssmax=True)
-            for _ in range(col_num_blocks)])
-        self.row_blocks = nn.ModuleList([
-            TransformerBlock(embed_dim=embed_dim, num_heads=row_nhead, use_rope=True) for _ in range(row_num_blocks)])
-        self.icl_blocks = nn.ModuleList([
-            TransformerBlock(embed_dim=icl_dim, num_heads=icl_nhead, ssmax=True) for _ in range(icl_num_blocks)])
+            for _ in range(col_num_blocks)
+        ])
+        self.row_blocks = nn.ModuleList(
+            [TransformerBlock(embed_dim=embed_dim, num_heads=row_nhead, use_rope=True) for _ in range(row_num_blocks)])
+        self.icl_blocks = nn.ModuleList(
+            [TransformerBlock(embed_dim=icl_dim, num_heads=icl_nhead, ssmax=True) for _ in range(icl_num_blocks)])
 
         self.row_cls_tokens = nn.Parameter(0.02 * torch.randn(1, 1, n_cls_cols, embed_dim))
         self.row_ln = nn.LayerNorm(embed_dim)
@@ -35,7 +51,7 @@ class NanoTabICLv2(nn.Module):
         # ----- Embedding: repeated feature grouping -> x embedding -> add y embedding to train
         x = x / (x[:, :n_train].std(dim=1, unbiased=False, keepdim=True) + 1e-8)  # standardize x based on train
         idxs = torch.arange(n_cols, dtype=torch.long, device=x.device)
-        x = torch.stack([x[:, :, (idxs + (2 ** i - 1)) % n_cols] for i in range(self.feature_group_size)], dim=-1)
+        x = torch.stack([x[:, :, (idxs + (2**i - 1)) % n_cols] for i in range(self.feature_group_size)], dim=-1)
         emb = self.x_embed(x)  # emb.shape = (n_batch, n_rows, n_cols, embed_dim)
         emb[:, :n_train] += self.y_embed_in(y[:, :, None, None])
 
@@ -47,7 +63,8 @@ class NanoTabICLv2(nn.Module):
         emb = torch.cat([self.row_cls_tokens.expand(n_batch, n_rows, -1, -1), emb], dim=2)
         for block in self.row_blocks[:-1]:
             emb = block.row_attn(emb)
-        emb = self.row_blocks[-1].row_attn(emb, q_max_idx=self.row_cls_tokens.size(-2))  # need only the cls token values
+        emb = self.row_blocks[-1].row_attn(emb,
+                                           q_max_idx=self.row_cls_tokens.size(-2))  # need only the cls token values
         emb = self.row_ln(emb).flatten(-2, -1)  # norm + merge cls tokens into one bigger token
 
         # ----- TF_icl: add y embedding -> self-attention
@@ -62,7 +79,7 @@ class NanoTabICLv2(nn.Module):
 
 class ClassEmbedding(nn.Embedding):
     def reset_parameters(self) -> None:  # change init to match one-hot + linear
-        nn.init.uniform_(self.weight, -1/math.sqrt(self.num_embeddings), 1/math.sqrt(self.num_embeddings))
+        nn.init.uniform_(self.weight, -1 / math.sqrt(self.num_embeddings), 1 / math.sqrt(self.num_embeddings))
 
     def forward(self, y: torch.Tensor) -> torch.Tensor:
         return super().forward(y.squeeze(-1).long())
@@ -108,8 +125,10 @@ class TransformerBlock(nn.MultiheadAttention, TableAttnBase):
         # q.shape: (batch_size, q_len, embed_dim), kv.shape: (batch_size, kv_len, embed_dim)
         x, q = q, self.ln_attn(q)
         kv = q if kv is None else self.ln_attn(kv)
-        if kv_max_idx is not None: kv = kv[..., :kv_max_idx, :]
-        if q_max_idx is not None: x, q = x[..., :q_max_idx, :], q[..., :q_max_idx, :]
+        if kv_max_idx is not None:
+            kv = kv[..., :kv_max_idx, :]
+        if q_max_idx is not None:
+            x, q = x[..., :q_max_idx, :], q[..., :q_max_idx, :]
 
         x = x + self.attn(q, kv)
         del q, kv  # save memory during inference
@@ -133,7 +152,7 @@ class Rope(nn.Module):  # rotary positional encoding
     def __init__(self, head_dim: int, theta: float):
         super().__init__()
         self.half = head_dim // 2
-        self.register_buffer("inv_freq", theta ** torch.linspace(0.0, -1.0, self.half + 1)[:-1], persistent=False)
+        self.register_buffer("inv_freq", theta**torch.linspace(0.0, -1.0, self.half + 1)[:-1], persistent=False)
         self.register_buffer("sin", torch.empty(0), persistent=False)
         self.register_buffer("cos", torch.empty(0), persistent=False)
 
@@ -165,9 +184,9 @@ class QASSMax(nn.Module):  # query-aware scalable softmax for better context len
         return self.base_mlp(logn).view(1, num_heads, 1, head_dim) * (1 + torch.tanh(self.query_mlp(q))) * q
 
 
-if __name__ == '__main__':  # check that forward pass works
+if __name__ == "__main__":  # check that forward pass works
     n_batch, n_train, n_test, n_cols = 2, 16, 8, 3
     model = NanoTabICLv2(max_classes=10, out_dim=10)
     x = torch.randn(n_batch, n_train + n_test, n_cols)
     y = torch.randint(10, size=(n_batch, n_train))
-    print(f'{model(x,y).shape=}')
+    print(f'{model(x, y).shape=}')

@@ -1,0 +1,10 @@
+[project]
+name = "nanotabicl"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4.6",
+    "python-lsp-server[flake8,mccabe,pycodestyle,pydocstyle,pyflakes,pylint,rope,whatthepatch,yapf]>=1.14.0",
+    "ruff>=0.15.14",
+    "torch>=2.12.0",
+]
