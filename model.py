@@ -63,8 +63,8 @@ class NanoTabICLv2(nn.Module):
         emb = torch.cat([self.row_cls_tokens.expand(n_batch, n_rows, -1, -1), emb], dim=2)
         for block in self.row_blocks[:-1]:
             emb = block.row_attn(emb)
-        emb = self.row_blocks[-1].row_attn(emb,
-                                           q_max_idx=self.row_cls_tokens.size(-2))  # need only the cls token values
+        # need only the cls token values
+        emb = self.row_blocks[-1].row_attn(emb, q_max_idx=self.row_cls_tokens.size(-2))
         emb = self.row_ln(emb).flatten(-2, -1)  # norm + merge cls tokens into one bigger token
 
         # ----- TF_icl: add y embedding -> self-attention
@@ -180,8 +180,14 @@ class QASSMax(nn.Module):  # query-aware scalable softmax for better context len
 
     def forward(self, q: torch.Tensor, n: int) -> torch.Tensor:
         batch_size, num_heads, seq_len, head_dim = q.shape
-        logn = q.new_tensor(math.log(max(1, n))).view(1, 1)
-        return self.base_mlp(logn).view(1, num_heads, 1, head_dim) * (1 + torch.tanh(self.query_mlp(q))) * q
+        # logn = q.new_tensor(math.log(max(1, n))).view(1, 1)
+        # return self.base_mlp(logn).view(1, num_heads, 1, head_dim) * (1 + torch.tanh(self.query_mlp(q))) * q
+        # out = self.base_mlp(logn).view(1, num_heads, 1, head_dim) * (1 + torch.tanh(self.query_mlp(q))) * q
+        # return out
+        logn = torch.tensor([math.log(max(1, n))], dtype=q.dtype, device=q.device)  # [1,]
+        logn = self.base_mlp(logn).view(1, num_heads, 1, head_dim)  # [1,H,1,d]
+        mod = 1 + torch.tanh(self.query_mlp(q))  # [B,H,S,d]
+        return logn * mod * q
 
 
 if __name__ == "__main__":  # check that forward pass works
