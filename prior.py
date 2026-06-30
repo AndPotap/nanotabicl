@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from numpy.random import randint
 from sklearn.ensemble import ExtraTreesRegressor
 
+
 # ----- Dataset sampling -----
 def rand_dataset_plain(x_cat_sizes: list[int], y_cat_sizes: list[int], n_samples: int) -> dict[str, torch.Tensor]:
     # categorical sizes: 0 for numericals, >0 for categoricals with this cardinality.
@@ -146,7 +147,8 @@ def rand_multi_func(xs: list[torch.Tensor], d_out: int):
 # ----- Random function -----
 def rand_func(x: torch.Tensor, d_out: int, only_cheap: bool = False) -> torch.Tensor:
     cheap_funcs = [rand_lin_func, rand_quad_func, rand_gp_func, rand_tree_func, rand_discretization_func]
-    func = randchoice(cheap_funcs if only_cheap else cheap_funcs + [rand_mlp_func, rand_em_func, rand_prod_func])
+    all_funcs = cheap_funcs + [rand_mlp_func, rand_em_func, rand_prod_func]
+    func = randchoice(cheap_funcs if only_cheap else all_funcs)
     return func(x, d_out)
 
 
@@ -162,10 +164,10 @@ def rand_quad_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
 
 
 def rand_mlp_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
-    hidden_width = randlogint(1, 128)
+    width, depth = randlogint(1, 128), randlogint(1, 4)
     x = x if randbool() else rand_act(x)
-    for _ in range(randlogint(1, 4) - 1):  # loop over layers except last one
-        x = rand_act(rand_lin_func(x, hidden_width))
+    for _ in range(depth - 1):  # loop over layers except last one
+        x = rand_act(rand_lin_func(x, width))
     x = rand_lin_func(x, d_out)
     return x if randbool() else rand_act(x)
 
@@ -178,6 +180,7 @@ def rand_tree_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
     split_dims = torch.multinomial(feature_imp, n_trees * depth, replacement=True)
     split_points = x[torch.randint(x.shape[0], size=(n_trees * depth, )), split_dims]
     split_sides = (x[:, split_dims] > split_points).reshape(x.shape[0], n_trees, depth)
+    # Every path corresponds to a unique binary number
     leaf_idxs = torch.einsum("btd,d->bt", split_sides.long(), 2**torch.arange(depth, dtype=torch.long))
     tree_idxs = torch.arange(n_trees, dtype=torch.long).expand(x.shape[0], n_trees)
     leaf_values = torch.randn(n_trees, 2**depth, d_out)  # Gaussian points -> avoid recursion
@@ -186,6 +189,7 @@ def rand_tree_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
 
 def rand_discretization_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
     n_centers = x.shape[0] if x.shape[0] <= 2 else randlogint(2, min(x.shape[0], 256))
+    # @ap: the only use of device
     centers = x[torch.randperm(len(x), device=x.device)[:n_centers]]
     targets = rand_lin_func(centers, d_out)  # transformed version of centers, for output with d_out dimensions
     dists = torch.cdist(x, centers, p=randlognum(0.5, 4.0))
