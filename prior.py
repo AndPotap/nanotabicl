@@ -14,10 +14,10 @@ def rand_dataset_plain(x_cat_sizes: list[int], y_cat_sizes: list[int], n_samples
     # ----- Create computation graph -----
     n_nodes = randlogint(2, 32 + 1)
     graph = rand_cauchy_graph(n_nodes)
-    node_cat_sizes = [dict() for _ in range(n_nodes)]
 
+    node_cat_sizes = [dict() for _ in range(n_nodes)]
     for feature_group, cat_sizes in [("x", x_cat_sizes), ("y", y_cat_sizes)]:
-        feature_nodes = np.random.permutation(n_nodes)[: randint(1, n_nodes + 1)]
+        feature_nodes = np.random.permutation(n_nodes)[:randint(1, n_nodes + 1)]
         feature_node_idxs = np.random.choice(feature_nodes, replace=True, size=len(cat_sizes))
 
         for idx, (node_idx, cat_size) in enumerate(zip(feature_node_idxs, cat_sizes)):
@@ -51,14 +51,13 @@ def rand_dataset_filtered(x_cat_sizes: list[int], y_cat_sizes: list[int], n_samp
         Y_np = y.float().cpu().numpy()
 
         # random_state=0 doesn't give OOB scores for all samples for some 133 <= n <= 257
-        et = ExtraTreesRegressor(
-            n_estimators=25, bootstrap=True, oob_score=True, n_jobs=1, random_state=1, max_depth=6
-        ).fit(X_np, Y_np[:, 0] if Y_np.shape[1] == 1 else Y_np)
+        et = ExtraTreesRegressor(n_estimators=25, bootstrap=True, oob_score=True, n_jobs=1, random_state=1,
+                                 max_depth=6).fit(X_np, Y_np[:, 0] if Y_np.shape[1] == 1 else Y_np)
 
         # compute improvement in MSE over mean prediction baseline per sample
         Yhat = et.oob_prediction_[:, None] if len(et.oob_prediction_.shape) == 1 else et.oob_prediction_  # (n, d)
         mask = ~np.isnan(Yhat).any(axis=1)  # keep only valid out-of-bag rows
-        imp = ((Y_np[mask] - Y_np.mean(axis=0, keepdims=True)) ** 2 - (Y_np[mask] - Yhat[mask]) ** 2).sum(axis=1)
+        imp = ((Y_np[mask] - Y_np.mean(axis=0, keepdims=True))**2 - (Y_np[mask] - Yhat[mask])**2).sum(axis=1)
         idx = np.random.default_rng(0).integers(0, len(imp), size=(200, len(imp)))  # 200 bootstrap samples
         pval = float(np.mean(imp[idx].mean(axis=1) <= 0.0))  # vectorized bootstrap
 
@@ -129,9 +128,8 @@ def rand_converter(x: torch.Tensor, cat_size: int) -> tuple[torch.Tensor, torch.
     if cat_size <= 0:  # numerical case is easy
         return x, (x if randbool() else rand_kumaraswamy_act(x))
 
-    mode = randchoice(
-        ["neigh_id", "neigh_disc", "neigh_func", "neigh_int", "softmax_id", "softmax_disc", "softmax_int"]
-    )
+    all_modes = ["neigh_id", "neigh_disc", "neigh_func", "neigh_int", "softmax_id", "softmax_disc", "softmax_int"]
+    mode = randchoice(all_modes)
 
     if mode.startswith("softmax"):
         x = randlognum(0.1, 10) * standardize(x) + torch.log(rand_weights(1, x.shape[1]) + 1e-4)
@@ -199,9 +197,9 @@ def rand_tree_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
     feature_imp = torch.clamp(x.std(dim=0, correction=0), 1e-8)
     feature_imp[~torch.isfinite(feature_imp)] = 1e-8
     split_dims = torch.multinomial(feature_imp, n_trees * depth, replacement=True)
-    split_points = x[torch.randint(x.shape[0], size=(n_trees * depth,)), split_dims]
+    split_points = x[torch.randint(x.shape[0], size=(n_trees * depth, )), split_dims]
     split_sides = (x[:, split_dims] > split_points).reshape(x.shape[0], n_trees, depth)
-    leaf_idxs = torch.einsum("btd,d->bt", split_sides.long(), 2 ** torch.arange(depth, dtype=torch.long))
+    leaf_idxs = torch.einsum("btd,d->bt", split_sides.long(), 2**torch.arange(depth, dtype=torch.long))
     tree_idxs = torch.arange(n_trees, dtype=torch.long).expand(x.shape[0], n_trees)
     leaf_values = torch.randn(n_trees, 2**depth, d_out)  # Gaussian points -> avoid recursion
     return leaf_values[tree_idxs, leaf_idxs].mean(dim=1)  # mean_tree leaf_values[tree, leaf_idxs[batch, tree], d]
@@ -237,11 +235,11 @@ def rand_gp_func(x: torch.Tensor, d_out: int, n_freqs: int = 256) -> torch.Tenso
 
 def rand_em_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
     n_ind = randlogint(2, max(16, 2 * d_out) + 1)  # need to have >= 2 outputs, otherwise softmax is constant
-    x_ind = x[torch.randint(x.shape[0], size=(n_ind,))] + torch.randn(n_ind, x.shape[1])  # centers with some noise
+    x_ind = x[torch.randint(x.shape[0], size=(n_ind, ))] + torch.randn(n_ind, x.shape[1])  # centers with some noise
     stds = torch.exp(torch.rand(1) * torch.randn(1, n_ind))  # random standard deviations
     consts = -torch.log(2 * torch.pi * stds**2) * (x.shape[-1] / 2)  # const term of Gaussian log-prob
     dists = torch.cdist(x, x_ind, p=randlognum(1.0, 4.0))  # matrix of distances
-    logits = consts - torch.clamp(dists / stds, min=0.0) ** np.random.uniform(1.0, 2.0)  # generalized exponent
+    logits = consts - torch.clamp(dists / stds, min=0.0)**np.random.uniform(1.0, 2.0)  # generalized exponent
     return rand_lin_func(torch.softmax(logits, dim=-1), d_out)  # transform to d_out with linear function
 
 
@@ -294,11 +292,11 @@ acts = [  # TabICLv1
 
 
 def rand_power_relu_act(x: torch.Tensor) -> torch.Tensor:
-    return torch.relu(x) ** randlognum(0.1, 10.0)
+    return torch.relu(x)**randlognum(0.1, 10.0)
 
 
 def rand_power_act(x: torch.Tensor) -> torch.Tensor:
-    return torch.sign(x) * (x.abs() ** randlognum(0.1, 10.0))
+    return torch.sign(x) * (x.abs()**randlognum(0.1, 10.0))
 
 
 def standardize(x: torch.Tensor) -> torch.Tensor:
@@ -311,7 +309,7 @@ def l2_normalize(x: torch.Tensor) -> torch.Tensor:
 
 def rand_rescale(x: torch.Tensor) -> torch.Tensor:
     # take random datapoints for shifts, so that activations like ReLU are not always zero
-    bias = -x[torch.randint(x.shape[0], size=(x.shape[1],)), torch.arange(x.shape[1])][None, :]
+    bias = -x[torch.randint(x.shape[0], size=(x.shape[1], )), torch.arange(x.shape[1])][None, :]
     return randlognum(1e-0, 1e1) * (x + bias)
 
 
@@ -319,7 +317,7 @@ def rand_kumaraswamy_act(x: torch.Tensor) -> torch.Tensor:
     a, b = (randlognum(0.2, 5) for _ in range(2))
     min, max = x.min(dim=0).values, x.max(dim=0).values
     x = torch.clamp((x - min) / (max - min + 1e-30), 0.0, 1.0)
-    return 1.0 - (1.0 - x**a) ** b
+    return 1.0 - (1.0 - x**a)**b
 
 
 # ----- Random matrix -----
@@ -375,7 +373,7 @@ def rand_unif_points(n_batch: int, n: int) -> torch.Tensor:
 
 def rand_circle_points(n_batch: int, n: int) -> torch.Tensor:
     # radial density is proportional to r^{n-1}, so radial CDF is F(r) = r^n, inverse CDF is r = u^{1/n}
-    return (torch.rand(n_batch, 1) ** (1 / n)) * row_normalize(torch.randn(n_batch, n))  # radial * uniform angular
+    return (torch.rand(n_batch, 1)**(1 / n)) * row_normalize(torch.randn(n_batch, n))  # radial * uniform angular
 
 
 def rand_gauss_mixture_points(n_batch: int, n: int) -> torch.Tensor:
@@ -392,9 +390,8 @@ def rand_gauss_mixture_points(n_batch: int, n: int) -> torch.Tensor:
 
 
 def rand_weights(n_batch: int, n: int) -> torch.Tensor:
-    decay_rate = torch.as_tensor(
-        np.exp(np.random.uniform(np.log(0.1 / np.log(1 + n)), np.log(6), size=n_batch))
-    ).float()
+    decay_rate = torch.as_tensor(np.exp(np.random.uniform(np.log(0.1 / np.log(1 + n)), np.log(6),
+                                                          size=n_batch))).float()
     base_weights = torch.linspace(1.0, n, n)
     log_weights = -decay_rate[:, None] * torch.log(base_weights)
     std_scale = torch.as_tensor(np.exp(np.random.uniform(np.log(1e-4), np.log(10), size=n_batch))).float()
