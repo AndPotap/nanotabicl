@@ -3,9 +3,10 @@
 | [Full TabICLv2 code](https://github.com/soda-inria/tabicl) | [TabICLv2 Paper](https://arxiv.org/abs/2602.11139) |
 |----------------------------------------------------|------------------------|
 
-This repository provides a short (~170 LOC) implementation of the [TabICLv2](https://arxiv.org/abs/2602.11139) architecture.
+This repository provides a short implementation of the [TabICLv2](https://arxiv.org/abs/2602.11139) architecture (<170 LOC)
+and a slightly simplified implementation of the TabICLv2 prior (<330 LOC).
 For using our pre-trained TabICLv2 model, 
-please visit the [main repository](https://github.com/soda-inria/tabicl).
+please visit the [main repository](https://github.com/soda-inria/tabicl). (Pre-training code coming out soon.)
 
 Compared to [nanoTabPFN](https://github.com/automl/nanoTabPFN),
 
@@ -13,6 +14,7 @@ Compared to [nanoTabPFN](https://github.com/automl/nanoTabPFN),
 - we implement the full model (including RoPE, QASSMax, etc.) with speed optimizations
   (but without the inference wrappers + memory optimizations from the main repository),
 - we implement regression as well,
+- we provide a (slightly simplified but still well-performing) prior for dataset generation,
 - we currently do not provide a sklearn interface,
 - we currently do not provide pre-training code.
   For now, we refer to [nanoTabPFN](https://github.com/automl/nanoTabPFN) and
@@ -21,7 +23,7 @@ Compared to [nanoTabPFN](https://github.com/automl/nanoTabPFN),
 Note that this repo uses LayerNorm with bias, which is used by the classification checkpoint of TabICLv2,
 while the regression checkpoint of TabICLv2 uses LayerNorm without bias.
 
-## Usage
+## Model usage
 
 ```python
 from model import NanoTabICLv2
@@ -45,6 +47,40 @@ Note that `X_train_and_test` is standardized inside the model (based on train on
 We do not include other preprocessing options from TabICLv2 
 since they are normally not part of the architecture.
 
+## Nanoprior
+
+In `prior.py`, we provide a concise and slightly simplified 
+implementation of the TabICLv2 prior,
+which nevertheless performs similarly well in our 
+(smaller-scale) experiments. 
+Changes compared to the TabICLv2 prior are:
+
+- No correlated sampling of scalar variables / hyperparameters.
+- Removed graph filtering (should be captured by dataset filtering anyway).
+- No graph pruning of irrelevant nodes 
+(can be a bit slower, but yields the same output).
+- Categorical converters with cardinality k always use k dimensions,
+never fewer.
+- Kumaraswamy warping now affects the extracted dataset column, 
+not the propagated value.
+- Fixed the constant in the random EM function.
+- The random activation used for random activation matrices 
+follows the general random activation now 
+by only using two of the four possible random power activation types.
+- Use corrected categorical size limit of 100 instead of 10.
+- Dataset filtering uses the same categorical sizes 
+in every attempt until a non-filtered dataset is generated.
+- fill NaN/inf with zero instead of discarding the whole dataset.
+- (Use torch.sign() in random activation,
+which has a different behavior at 0 than `2*(x>=0).float()-1`.)
+
+Preprocessing code (outlier handling, standard scaling) 
+is also not included as it could be done inside the model.
+
+When running the file, it will generate a plot of some random datasets.
+
 ## Updates
 
+- 2026/06/10: Add nanoprior. 
+Bugfix based on [#2](https://github.com/soda-inria/nanotabicl/issues/2): Subtract mean when standardizing input data.
 - 2026/03/25: Add faster + cached RoPE implementation based on the TabICLv2 version (warning: this permutes the neurons, so it's not compatible with older nanotabicl checkpoints).

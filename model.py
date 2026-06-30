@@ -48,8 +48,8 @@ class NanoTabICLv2(nn.Module):
         n_batch, n_rows, n_cols = x.shape
         n_batch, n_train = y.shape
 
-        # ----- Embedding: repeated feature grouping -> x embedding -> add y embedding to train
-        x = x / (x[:, :n_train].std(dim=1, unbiased=False, keepdim=True) + 1e-8)  # standardize x based on train
+        # ----- Embedding: standardize -> repeated feature grouping -> x embedding -> add y embedding to train
+        x = (x - x[:, :n_train].mean(dim=1, keepdim=True)) / (x[:, :n_train].std(dim=1, unbiased=False, keepdim=True) + 1e-8)
         idxs = torch.arange(n_cols, dtype=torch.long, device=x.device)
         x = torch.stack([x[:, :, (idxs + (2**i - 1)) % n_cols] for i in range(self.feature_group_size)], dim=-1)
         emb = self.x_embed(x)  # emb.shape = (n_batch, n_rows, n_cols, embed_dim)
