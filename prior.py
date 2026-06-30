@@ -7,8 +7,6 @@ from numpy.random import randint
 from sklearn.ensemble import ExtraTreesRegressor
 
 # ----- Dataset sampling -----
-
-
 def rand_dataset_plain(x_cat_sizes: list[int], y_cat_sizes: list[int], n_samples: int) -> dict[str, torch.Tensor]:
     # categorical sizes: 0 for numericals, >0 for categoricals with this cardinality.
     # ----- Create computation graph -----
@@ -65,16 +63,7 @@ def rand_dataset_filtered(x_cat_sizes: list[int], y_cat_sizes: list[int], n_samp
             return tensors
 
 
-def rand_cat_sizes(n_features: int, max_cat_size: int = 100) -> list[int]:
-    cat_fraction = np.clip(np.random.uniform(-0.5, 1.2), 0.0, 1.0)
-    n_cat = round(n_features * cat_fraction)
-    cat_size_limit = randlogint(2, max_cat_size + 1)
-    return [0] * (n_features - n_cat) + [randlogint(2, cat_size_limit + 1) for _ in range(n_cat)]
-
-
 # ----- Scalar sampling -----
-
-
 def randlognum(low: float, high: float) -> float:
     return float(np.exp(np.random.uniform(np.log(low), np.log(high))))
 
@@ -92,8 +81,6 @@ def randchoice(options: list) -> Any:
 
 
 # ----- Random graph -----
-
-
 def rand_cauchy_graph(n_nodes: int) -> list[list[int]]:  # returns list of parent node idxs for each node
     output_importances = torch.empty(n_nodes).cauchy_()
     input_importances = torch.empty(n_nodes).cauchy_()
@@ -103,8 +90,6 @@ def rand_cauchy_graph(n_nodes: int) -> list[list[int]]:  # returns list of paren
 
 
 # ----- Random node function -----
-
-
 def rand_node_func(cat_sizes: dict[str, int], xs: list[torch.Tensor], n_samples: int):
     n_features = sum(max(csz, 1) for csz in cat_sizes.values()) + randlogint(1, 32)
     x = rand_points(n_samples, n_features) if len(xs) == 0 else rand_multi_func(xs, n_features)
@@ -122,8 +107,6 @@ def rand_node_func(cat_sizes: dict[str, int], xs: list[torch.Tensor], n_samples:
 
 
 # ----- Random converter -----
-
-
 def rand_converter(x: torch.Tensor, cat_size: int) -> tuple[torch.Tensor, torch.Tensor]:
     if cat_size <= 0:  # numerical case is easy
         return x, (x if randbool() else rand_kumaraswamy_act(x))
@@ -152,8 +135,6 @@ def rand_converter(x: torch.Tensor, cat_size: int) -> tuple[torch.Tensor, torch.
 
 
 # ----- Random multi-function -----
-
-
 def rand_multi_func(xs: list[torch.Tensor], d_out: int):
     if randbool():
         return rand_func(torch.cat(xs, dim=-1), d_out)  # concatenate before random function
@@ -163,8 +144,6 @@ def rand_multi_func(xs: list[torch.Tensor], d_out: int):
 
 
 # ----- Random function -----
-
-
 def rand_func(x: torch.Tensor, d_out: int, only_cheap: bool = False) -> torch.Tensor:
     cheap_funcs = [rand_lin_func, rand_quad_func, rand_gp_func, rand_tree_func, rand_discretization_func]
     func = randchoice(cheap_funcs if only_cheap else cheap_funcs + [rand_mlp_func, rand_em_func, rand_prod_func])
@@ -248,8 +227,6 @@ def rand_prod_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
 
 
 # ----- Random activation -----
-
-
 def rand_act(x: torch.Tensor) -> torch.Tensor:
     return standardize(rand_plain_act(rand_rescale(standardize(x))))
 
@@ -321,8 +298,6 @@ def rand_kumaraswamy_act(x: torch.Tensor) -> torch.Tensor:
 
 
 # ----- Random matrix -----
-
-
 def row_normalize(matrix: torch.Tensor, eps: float = 0.0) -> torch.Tensor:
     return matrix / (eps + matrix.norm(dim=-1, keepdim=True))
 
@@ -357,8 +332,6 @@ def rand_activation_matrix(n_batch: int, n: int, m: int) -> torch.Tensor:
 
 
 # ----- Random points -----
-
-
 def rand_points(n_batch: int, n: int) -> torch.Tensor:
     return rand_func(randchoice([rand_cov_points, torch.randn, rand_unif_points, rand_circle_points])(n_batch, n), n)
 
@@ -387,8 +360,6 @@ def rand_gauss_mixture_points(n_batch: int, n: int) -> torch.Tensor:
 
 
 # ----- Random weights -----
-
-
 def rand_weights(n_batch: int, n: int) -> torch.Tensor:
     decay_rate = torch.as_tensor(np.exp(np.random.uniform(np.log(0.1 / np.log(1 + n)), np.log(6),
                                                           size=n_batch))).float()
@@ -399,8 +370,6 @@ def rand_weights(n_batch: int, n: int) -> torch.Tensor:
     logits = torch.stack([logits[i, torch.randperm(n)] for i in range(n_batch)], dim=0)  # no batch randperm available
     return np.sqrt(n) * row_normalize(torch.softmax(logits, dim=-1))
 
-
-# ----- plot some datasets -----
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
