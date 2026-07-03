@@ -331,6 +331,7 @@ def rand_weights_matrix(n_batch: int, n: int, m: int) -> torch.Tensor:
 
 
 def rand_singular_values_matrix(n_batch: int, n: int, m: int) -> torch.Tensor:
+    # @ap: pseudo-SVD
     U, D, V = torch.randn(n_batch, n, min(n, m)), rand_weights(n_batch, min(n, m)), torch.randn(n_batch, min(n, m), m)
     return (U * D[:, None, :]) @ V  # SVD, but Gaussian matrix is cheaper than orthogonal and still rotation-invariant
 
@@ -378,14 +379,15 @@ def rand_gauss_mixture_points(n_batch: int, n: int) -> torch.Tensor:
 
 # ----- Random weights -----
 def rand_weights(n_batch: int, n: int) -> torch.Tensor:
-    decay_rate = torch.as_tensor(np.exp(np.random.uniform(np.log(0.1 / np.log(1 + n)), np.log(6),
-                                                          size=n_batch))).float()
-    base_weights = torch.linspace(1.0, n, n)
-    log_weights = -decay_rate[:, None] * torch.log(base_weights)
-    std_scale = torch.as_tensor(np.exp(np.random.uniform(np.log(1e-4), np.log(10), size=n_batch))).float()
-    logits = log_weights + std_scale[:, None] * torch.randn(n_batch, n)
+    # @ap: maybe rand_sharp_decay_weights
+    unif = np.random.uniform(np.log(0.1 / np.log(1 + n)), np.log(6), size=n_batch)  # @ap: log-uniform
+    decay_rate = torch.as_tensor(np.exp(unif)).float()  # [B,]
+    base_weights = torch.linspace(1.0, n, n)  # [n,]
+    log_weights = -decay_rate[:, None] * torch.log(base_weights)  # [B,n]
+    std_scale = torch.as_tensor(np.exp(np.random.uniform(np.log(1e-4), np.log(10), size=n_batch))).float()  # [B,]
+    logits = log_weights + std_scale[:, None] * torch.randn(n_batch, n)  # [B,n]
     logits = torch.stack([logits[i, torch.randperm(n)] for i in range(n_batch)], dim=0)  # no batch randperm available
-    return np.sqrt(n) * row_normalize(torch.softmax(logits, dim=-1))
+    return np.sqrt(n) * row_normalize(torch.softmax(logits, dim=-1))  # [B,n]  # @ap: l2 norm for spheric not proba
 
 
 if __name__ == "__main__":
