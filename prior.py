@@ -146,6 +146,7 @@ def rand_multi_func(xs: list[torch.Tensor], d_out: int):
 
 # ----- Random function -----
 def rand_func(x: torch.Tensor, d_out: int, only_cheap: bool = False) -> torch.Tensor:
+    # x: [B,d_in]
     cheap_funcs = [rand_lin_func, rand_quad_func, rand_gp_func, rand_tree_func, rand_discretization_func]
     all_funcs = cheap_funcs + [rand_mlp_func, rand_em_func, rand_prod_func]
     func = randchoice(cheap_funcs if only_cheap else all_funcs)
@@ -153,10 +154,12 @@ def rand_func(x: torch.Tensor, d_out: int, only_cheap: bool = False) -> torch.Te
 
 
 def rand_lin_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
+    # x: [B,d_in]
     return x @ (rand_matrix(1, d_out, x.shape[1])[0].t())
 
 
 def rand_quad_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
+    # x: [B,d_in]
     idxs = torch.randperm(x.shape[1])[:20] if x.shape[1] > 20 else torch.arange(x.shape[1])  # drop x columns if needed
     tensor_3d = rand_matrix(d_out, len(idxs) + 1, len(idxs) + 1)
     x = torch.cat([x[:, idxs], torch.ones(x.shape[0], 1)], dim=-1)  # append ones to get constant + linear terms
@@ -164,6 +167,7 @@ def rand_quad_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
 
 
 def rand_mlp_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
+    # x: [B,d_in]
     width, depth = randlogint(1, 128), randlogint(1, 4)
     x = x if randbool() else rand_act(x)
     for _ in range(depth - 1):  # loop over layers except last one
@@ -173,60 +177,69 @@ def rand_mlp_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
 
 
 def rand_tree_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
+    # x: [B,d_in]
     n_trees = randlogint(1, 128)
     depth = randint(1, 8)
     feature_imp = torch.clamp(x.std(dim=0, correction=0), 1e-8)
     feature_imp[~torch.isfinite(feature_imp)] = 1e-8
-    split_dims = torch.multinomial(feature_imp, n_trees * depth, replacement=True)
-    split_points = x[torch.randint(x.shape[0], size=(n_trees * depth, )), split_dims]
-    split_sides = (x[:, split_dims] > split_points).reshape(x.shape[0], n_trees, depth)
+    # feature_imp = feature_imp / feature_imp.sum()  # @ap: normalization is not needed
+    split_dims = torch.multinomial(feature_imp, n_trees * depth, replacement=True)  # [TD,]
+    rand_split_idxs = torch.randint(x.shape[0], size=(n_trees * depth, ))  # [TD,]
+    split_points = x[rand_split_idxs, split_dims]  # @ap: same val per depth  # [TD,]
+    split_sides = (x[:, split_dims] > split_points).reshape(x.shape[0], n_trees, depth)  # [B,T,D]
     # Every path corresponds to a unique binary number
-    leaf_idxs = torch.einsum("btd,d->bt", split_sides.long(), 2**torch.arange(depth, dtype=torch.long))
-    tree_idxs = torch.arange(n_trees, dtype=torch.long).expand(x.shape[0], n_trees)
-    leaf_values = torch.randn(n_trees, 2**depth, d_out)  # Gaussian points -> avoid recursion
-    return leaf_values[tree_idxs, leaf_idxs].mean(dim=1)  # mean_tree leaf_values[tree, leaf_idxs[batch, tree], d]
+    leaf_idxs = torch.einsum("btd,d->bt", split_sides.long(), 2**torch.arange(depth, dtype=torch.long))  # [B,T]
+    tree_idxs = torch.arange(n_trees, dtype=torch.long).expand(x.shape[0], n_trees)  # [B,T]
+    leaf_values = torch.randn(n_trees, 2**depth, d_out)  # Gaussian points -> avoid recursion [T,2^D,d_out]
+    # @ap: interesting broadcasting below [T,2^D,d_out][[B,T], [B,T]] -> [B,T,d_out]
+    return leaf_values[tree_idxs, leaf_idxs].mean(dim=1)  # [B,d_out] @ap: mean over tree
 
 
 def rand_discretization_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
+    # x: [B,d_in]
     n_centers = x.shape[0] if x.shape[0] <= 2 else randlogint(2, min(x.shape[0], 256))
     # @ap: the only use of device
-    centers = x[torch.randperm(len(x), device=x.device)[:n_centers]]
-    targets = rand_lin_func(centers, d_out)  # transformed version of centers, for output with d_out dimensions
-    dists = torch.cdist(x, centers, p=randlognum(0.5, 4.0))
-    closest_idx = dists.argmin(dim=-1)
-    return targets[closest_idx]
+    centers = x[torch.randperm(len(x), device=x.device)[:n_centers]]  # [C,d_in] @ap: device is telling
+    targets = rand_lin_func(centers, d_out)  # [C,d_out]
+    dists = torch.cdist(x, centers, p=randlognum(0.5, 4.0))  # [B,C]
+    closest_idx = dists.argmin(dim=-1)  # [B,]
+    return targets[closest_idx]  # [B,d_out]
 
 
 def rand_gp_func(x: torch.Tensor, d_out: int, n_freqs: int = 256) -> torch.Tensor:
+    # @ap: maybe rand_fourier_features_func
+    # x: [B,d_in]
     a = randlognum(2.0, 20.0)  # global decay rate a > 1
 
     if randbool():  # use standard kernel
-        input_tfm = torch.randn(x.shape[1], x.shape[1]) * rand_weights(1, x.shape[1]).t()
-        u = torch.clamp(torch.rand(n_freqs), 1e-6, 1 - 1e-6)  # clip to avoid trouble with inverse CDF
-        invcdf = torch.pow(u, 1 / (1 - a)) - 1.0  # see the paper
-        freqs = torch.randn(x.shape[1], n_freqs)
+        input_tfm = torch.randn(x.shape[1], x.shape[1]) * rand_weights(1, x.shape[1]).t()  # [d_in,d_in]
+        u = torch.clamp(torch.rand(n_freqs), 1e-6, 1 - 1e-6)  # [F,] clip to avoid trouble with inverse CDF
+        invcdf = torch.pow(u, 1 / (1 - a)) - 1.0  # [F,] see the paper
+        freqs = torch.randn(x.shape[1], n_freqs)  # [d_in,F]
         freqs *= invcdf[None, :] / freqs.norm(dim=0, keepdim=True)  # invcdf for the radial component
-        freqs = randlognum(0.5, 10.0) * input_tfm @ freqs  # sample global lengthscale for the kernel
+        freqs = randlognum(0.5, 10.0) * input_tfm @ freqs  # [d_in,F] sample global lengthscale for the kernel
     else:  # use product kernel, no specialized input transform etc.
         u = torch.clamp(torch.rand(x.shape[1], n_freqs), 1e-6, 1 - 1e-6)  # avoid too much trouble with inverse CDF
-        freqs = torch.pow(u, 1 / (1 - a)) - 1.0
+        freqs = torch.pow(u, 1 / (1 - a)) - 1.0  # [d_in,F]
 
-    bias = 2 * np.pi * torch.rand(1, n_freqs)
-    weights = torch.randn(n_freqs, d_out) / np.sqrt(n_freqs)
-    return torch.cos(x @ freqs + bias) @ weights
+    bias = 2 * np.pi * torch.rand(1, n_freqs)  # [1,F]
+    weights = torch.randn(n_freqs, d_out) / np.sqrt(n_freqs)  # [F,d_out]
+    return torch.cos(x @ freqs + bias) @ weights  # [B,d_out]
 
 
 def rand_em_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
+    # x: [B,d_in]
     n_ind = randlogint(2, max(16, 2 * d_out) + 1)  # need to have >= 2 outputs, otherwise softmax is constant
-    x_ind = x[torch.randint(x.shape[0], size=(n_ind, ))] + torch.randn(n_ind, x.shape[1])  # centers with some noise
-    stds = torch.exp(torch.rand(1) * torch.randn(1, n_ind))  # random standard deviations
-    consts = -torch.log(2 * torch.pi * stds**2) * (x.shape[-1] / 2)  # const term of Gaussian log-prob
-    dists = torch.cdist(x, x_ind, p=randlognum(1.0, 4.0))  # matrix of distances
-    logits = consts - torch.clamp(dists / stds, min=0.0)**np.random.uniform(1.0, 2.0)  # generalized exponent
+    x_ind = x[torch.randint(x.shape[0], size=(n_ind, ))] + torch.randn(n_ind, x.shape[1])  # [C,d_in]
+    stds = torch.exp(torch.rand(1) * torch.randn(1, n_ind))  # [1,C] random standard deviations
+    consts = -torch.log(2 * torch.pi * stds**2) * (x.shape[-1] / 2)  # [1,C] const term of Gaussian log-prob
+    dists = torch.cdist(x, x_ind, p=randlognum(1.0, 4.0))  # [B,C]
+    logits = consts - torch.clamp(dists / stds, min=0.0)**np.random.uniform(1.0, 2.0)  # generalized exponent [B,C]
     return rand_lin_func(torch.softmax(logits, dim=-1), d_out)  # transform to d_out with linear function
 
 
 def rand_prod_func(x: torch.Tensor, d_out: int) -> torch.Tensor:
+    # x: [B,d_in]
     return rand_func(x, d_out, only_cheap=True) * rand_func(x, d_out, only_cheap=True)  # only_cheap -> no recursion
 
 
